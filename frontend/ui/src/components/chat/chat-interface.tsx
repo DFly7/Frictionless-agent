@@ -206,7 +206,7 @@ export function ChatInterface() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col h-full relative">
         {/* Messages Area */}
-        <ScrollArea className="flex-1 p-4">
+        <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-3xl mx-auto space-y-6 pb-4">
             {messages.length === 0 && (
               <div className="text-center text-muted-foreground py-20">
@@ -218,9 +218,7 @@ export function ChatInterface() {
             {messages.map((m) => (
               <ChatMessage
                 key={m.id}
-                // @ts-ignore
-                role={m.role as "user" | "assistant" | "system" | "data"}
-                // @ts-ignore
+                role={m.role}
                 content={m.content}
               />
             ))}
@@ -232,7 +230,7 @@ export function ChatInterface() {
             )}
             <div ref={scrollRef} />
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Input Area */}
         <div className="p-4 border-t bg-background">
