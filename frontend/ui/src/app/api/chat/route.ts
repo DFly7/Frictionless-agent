@@ -37,24 +37,14 @@ export async function POST(req: Request) {
             );
         }
 
-        // 3. Determine Agent ID
-        // Logic: Map user email to agent ID (1 or 2)
-        // If email contains "user2", use "2", else default to "1"
         const email = user.email || "";
-        let agentId = "1";
-        if (email.includes("user2")) {
-            agentId = "2";
-        }
-        // You can expand this logic or use a database mapping later
-
-        // 4. Proxy to Gateway
         const gatewayUrl = process.env.GATEWAY_URL || "http://127.0.0.1:8080";
 
         const gatewayResponse = await fetch(`${gatewayUrl}/chat`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-User-ID": agentId,
+                "X-User-Email": email,
             },
             body: JSON.stringify({
                 message: lastMessage.content,
@@ -71,16 +61,7 @@ export async function POST(req: Request) {
         }
 
         const data = await gatewayResponse.json();
-
-        // 5. Return response
-        // The Gateway returns { "response": "..." }
-        // We return it as a simple text response for useChat to consume (or as a stream if we wanted to get fancy)
-        // For simplicity with useChat non-streaming mode, we can just return the text.
-        // However, useChat expects a stream by default.
-        // We can simulate a stream or just return the text.
-        // If we return a simple Response with the text body, useChat handles it.
-
-        return new Response(data.response);
+        return NextResponse.json(data);
 
     } catch (error: any) {
         console.error("[Chat API] Internal error:", error);

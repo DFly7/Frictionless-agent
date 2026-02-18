@@ -16,12 +16,7 @@ export async function POST(req: Request) {
             );
         }
 
-        // Determine Agent ID
         const email = user.email || "";
-        let agentId = "1";
-        if (email.includes("user2")) {
-            agentId = "2";
-        }
 
         const formData = await req.formData();
         const file = formData.get("file") as File;
@@ -43,7 +38,7 @@ export async function POST(req: Request) {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-User-ID": agentId,
+                "X-User-Email": email,
             },
             body: JSON.stringify({
                 files: [

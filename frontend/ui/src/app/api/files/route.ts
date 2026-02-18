@@ -16,19 +16,13 @@ export async function GET(req: Request) {
       );
     }
 
-    // Determine Agent ID (same logic as chat route)
     const email = user.email || "";
-    let agentId = "1";
-    if (email.includes("user2")) {
-      agentId = "2";
-    }
-
     const gatewayUrl = process.env.GATEWAY_URL || "http://127.0.0.1:8080";
 
     const gatewayResponse = await fetch(`${gatewayUrl}/files`, {
       method: "GET",
       headers: {
-        "X-User-ID": agentId,
+        "X-User-Email": email,
       },
     });
 

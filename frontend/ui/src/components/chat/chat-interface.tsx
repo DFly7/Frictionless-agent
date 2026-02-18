@@ -1,40 +1,22 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Send, Upload, Paperclip, FileIcon } from "lucide-react";
 import { ChatMessage } from "./chat-message";
-import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 
-interface FileItem {
-  name: string;
-  path: string;
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
 }
 
 export function ChatInterface() {
-  const { messages, setMessages, status, sendMessage } = useChat({
-    // @ts-ignore
-    api: "/api/chat",
-    onError: (e) => {
-      console.error("Chat error:", e);
-      // @ts-ignore
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `Sorry, something went wrong: ${e.message}`,
-        },
-      ]);
-    },
-  });
-
-  const isLoading = status === "streaming" || status === "submitted";
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
@@ -44,10 +26,58 @@ export function ChatInterface() {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    const userMessage = { role: "user", content: input };
-    setInput(""); // Clear input immediately
-    // @ts-ignore
-    await sendMessage(userMessage);
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: input,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setIsLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...messages, userMessage],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Sorry, something went wrong: ${err.error || res.statusText}`,
+          },
+        ]);
+        return;
+      }
+
+      const data = await res.json();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: data.response,
+        },
+      ]);
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Connection failed: ${err.message}`,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
 
