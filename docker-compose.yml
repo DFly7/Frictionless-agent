@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  web-ui:
+    build:
+      context: ./frontend/ui
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    ports:
+      - "3000:3000"
+    environment:
+      - GATEWAY_URL=http://gateway:8080
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    depends_on:
+      - gateway
+    networks:
+      - nanobot-net
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+      - ${HOME}/.nanobot/config.json:/config/config.json
+      - ${HOME}/.nanobot/workspace:/template/workspace:ro
+    environment:
+      - AGENT_IMAGE=nanobot-tutor
+      - NETWORK_NAME=nanobot-net
+      - HOST_DATA_DIR=${PWD}/data
+      - HOST_CONFIG_PATH=${HOME}/.nanobot/config.json
+    networks:
+      - nanobot-net
+
+networks:
+  nanobot-net:
+    name: nanobot-net
+    driver: bridge
