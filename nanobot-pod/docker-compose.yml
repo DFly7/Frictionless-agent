@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  web-ui:
+    build: ./web-ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - gateway
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - agent-1
+      - agent-2
+
+  agent-1:
+    build: ../nanobot-tutor
+    command: ["gateway"]
+    volumes:
+      - ./data/user1:/root/.nanobot
+      - ${HOME}/.nanobot/config.json:/root/.nanobot/config.json
+    environment:
+      - NANOBOT_HTTP_PORT=8000
+      - NO_COLOR=1
+    restart: unless-stopped
+
+  agent-2:
+    build: ../nanobot-tutor
+    command: ["gateway"]
+    volumes:
+      - ./data/user2:/root/.nanobot
+      - ${HOME}/.nanobot/config.json:/root/.nanobot/config.json
+    environment:
+      - NANOBOT_HTTP_PORT=8000
+      - NO_COLOR=1
+    restart: unless-stopped
