@@ -437,6 +437,7 @@ def agent(
     session_id: str = typer.Option("cli:direct", "--session", "-s", help="Session ID"),
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"),
+    log_context: bool = typer.Option(False, "--log-context", help="Log full context sent to LLM to ~/.nanobot/logs/context.log"),
 ):
     """Interact with the agent directly."""
     from nanobot.config.loader import load_config
@@ -467,6 +468,7 @@ def agent(
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
+        log_context=log_context,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on

@@ -4,6 +4,7 @@ import asyncio
 from contextlib import AsyncExitStack
 import json
 import json_repair
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,7 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
+        log_context: bool = False,
     ):
         from nanobot.config.schema import ExecToolConfig
         from nanobot.cron.service import CronService
@@ -68,6 +70,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.log_context = log_context
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -146,12 +149,38 @@ class AgentLoop:
             if isinstance(cron_tool, CronTool):
                 cron_tool.set_context(channel, chat_id)
 
-    async def _run_agent_loop(self, initial_messages: list[dict]) -> tuple[str | None, list[str]]:
+    def _log_context(self, messages: list[dict]) -> None:
+        """Log the full context being sent to the LLM."""
+        try:
+            log_dir = Path.home() / ".nanobot" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "context.log"
+            
+            timestamp = datetime.now().isoformat()
+            
+            # Create a simplified entry focusing on the messages
+            entry = {
+                "timestamp": timestamp,
+                "model": self.model,
+                "message_count": len(messages),
+                "messages": messages
+            }
+            
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"--- CONTEXT LOG ENTRY {timestamp} ---\n")
+                f.write(json.dumps(entry, indent=2, default=str, ensure_ascii=False))
+                f.write("\n\n")
+                
+        except Exception as e:
+            logger.error(f"Failed to write context log: {e}")
+
+    async def _run_agent_loop(self, initial_messages: list[dict], session: Session | None = None) -> tuple[str | None, list[str]]:
         """
         Run the agent iteration loop.
 
         Args:
             initial_messages: Starting messages for the LLM conversation.
+            session: Optional session object to persist intermediate messages.
 
         Returns:
             Tuple of (final_content, list_of_tools_used).
@@ -163,6 +192,10 @@ class AgentLoop:
 
         while iteration < self.max_iterations:
             iteration += 1
+
+            # Log the full context before calling LLM
+            if self.log_context:
+                self._log_context(messages)
 
             response = await self.provider.chat(
                 messages=messages,
@@ -189,6 +222,15 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                 )
 
+                if session:
+                    session.add_message(
+                        "assistant",
+                        response.content or "",
+                        tool_calls=tool_call_dicts,
+                        reasoning_content=response.reasoning_content,
+                    )
+                    self.sessions.save(session)
+
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
@@ -197,6 +239,16 @@ class AgentLoop:
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    
+                    if session:
+                        session.add_message(
+                            "tool",
+                            result,
+                            tool_call_id=tool_call.id,
+                            name=tool_call.name,
+                        )
+                        self.sessions.save(session)
+
                 messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
             else:
                 final_content = response.content
@@ -293,14 +345,24 @@ class AgentLoop:
             asyncio.create_task(self._consolidate_memory(session))
 
         self._set_tool_context(msg.channel, msg.chat_id)
+        
+        # Add user message to session immediately so it precedes tool calls
+        session.add_message("user", msg.content)
+        self.sessions.save(session)
+        
+        # Get history but exclude the message we just added (build_messages adds current_message)
+        history = session.get_history(max_messages=self.memory_window)
+        if history:
+            history = history[:-1]
+
         initial_messages = self.context.build_messages(
-            history=session.get_history(max_messages=self.memory_window),
+            history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
         )
-        final_content, tools_used = await self._run_agent_loop(initial_messages)
+        final_content, tools_used = await self._run_agent_loop(initial_messages, session=session)
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
@@ -308,7 +370,6 @@ class AgentLoop:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
         
-        session.add_message("user", msg.content)
         session.add_message("assistant", final_content,
                             tools_used=tools_used if tools_used else None)
         self.sessions.save(session)
@@ -342,18 +403,28 @@ class AgentLoop:
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
         self._set_tool_context(origin_channel, origin_chat_id)
+        
+        # Add user message first
+        user_msg = f"[System: {msg.sender_id}] {msg.content}"
+        session.add_message("user", user_msg)
+        self.sessions.save(session)
+
+        # Get history excluding the new message
+        history = session.get_history(max_messages=self.memory_window)
+        if history:
+            history = history[:-1]
+            
         initial_messages = self.context.build_messages(
-            history=session.get_history(max_messages=self.memory_window),
+            history=history,
             current_message=msg.content,
             channel=origin_channel,
             chat_id=origin_chat_id,
         )
-        final_content, _ = await self._run_agent_loop(initial_messages)
+        final_content, _ = await self._run_agent_loop(initial_messages, session=session)
 
         if final_content is None:
             final_content = "Background task completed."
         
-        session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
         self.sessions.save(session)
         
@@ -394,10 +465,23 @@ class AgentLoop:
 
         lines = []
         for m in old_messages:
-            if not m.get("content"):
+            content = m.get("content") or ""
+            role = m["role"].upper()
+            extra_info = ""
+
+            if m.get("tool_calls"):
+                names = [tc["function"]["name"] for tc in m["tool_calls"]]
+                extra_info = f" [calls: {', '.join(names)}]"
+            elif m.get("tools_used"):
+                extra_info = f" [tools: {', '.join(m['tools_used'])}]"
+            
+            if role == "TOOL" and m.get("name"):
+                role = f"TOOL ({m['name']})"
+
+            if not content and not extra_info:
                 continue
-            tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
-            lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
+
+            lines.append(f"[{m.get('timestamp', '?')[:16]}] {role}{extra_info}: {content}")
         conversation = "\n".join(lines)
         current_memory = memory.read_long_term()
 

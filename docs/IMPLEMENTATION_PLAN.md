@@ -12,7 +12,7 @@ We will upgrade NanoBot's "Brain" and "Hands" to match OpenClaw's capabilities w
     *   **Inject "Tooling Discipline":** Add the "Before/After" rules (e.g., "Scan memory before answering questions about the past").
     *   **Inject Tool Definitions:** dynamically list available tools and their specific schemas in the system prompt.
 
-*   [ ] **Fix Context Persistence (Critical Bug):** 🐞
+*   [x] **Fix Context Persistence (Critical Bug):** 🐞
     *   **Issue:** `AgentLoop` currently adds tool calls/results to the *ephemeral* message list but NOT to the persistent `Session` object. This causes amnesia about *how* a task was solved once the turn ends.
     *   **Fix:** Modify `AgentLoop._run_agent_loop` or `_process_message` to save intermediate `tool_call` and `tool_result` messages to the `Session` so they survive restarts/reloads.
 

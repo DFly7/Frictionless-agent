@@ -42,8 +42,20 @@ class Session:
         self.updated_at = datetime.now()
     
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
-        """Get recent messages in LLM format (role + content only)."""
-        return [{"role": m["role"], "content": m["content"]} for m in self.messages[-max_messages:]]
+        """Get recent messages in LLM format."""
+        history = []
+        for m in self.messages[-max_messages:]:
+            msg = {"role": m["role"], "content": m["content"]}
+            if "tool_calls" in m:
+                msg["tool_calls"] = m["tool_calls"]
+            if "tool_call_id" in m:
+                msg["tool_call_id"] = m["tool_call_id"]
+            if "name" in m:
+                msg["name"] = m["name"]
+            if "reasoning_content" in m:
+                msg["reasoning_content"] = m["reasoning_content"]
+            history.append(msg)
+        return history
     
     def clear(self) -> None:
         """Clear all messages and reset session to initial state."""
