@@ -6,6 +6,7 @@ import signal
 from pathlib import Path
 import select
 import sys
+import io
 
 import typer
 from rich.console import Console
@@ -13,8 +14,8 @@ from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit import PromptSession, print_formatted_text
+from prompt_toolkit.formatted_text import HTML, ANSI
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
@@ -100,11 +101,20 @@ def _init_prompt_session() -> None:
 def _print_agent_response(response: str, render_markdown: bool) -> None:
     """Render assistant response with consistent terminal styling."""
     content = response or ""
+    
+    # Render using rich to capture ANSI output
+    buf = io.StringIO()
+    # Use console width to respect terminal size, force_terminal=True for ANSI codes
+    capture_console = Console(file=buf, force_terminal=True, width=console.width)
+    
     body = Markdown(content) if render_markdown else Text(content)
-    console.print()
-    console.print(f"[cyan]{__logo__} nanobot[/cyan]")
-    console.print(body)
-    console.print()
+    capture_console.print()
+    capture_console.print(f"[cyan]{__logo__} nanobot[/cyan]")
+    capture_console.print(body)
+    capture_console.print()
+    
+    # Print using prompt_toolkit's ANSI handler to integrate with patch_stdout
+    print_formatted_text(ANSI(buf.getvalue()))
 
 
 def _is_exit_command(command: str) -> bool:
