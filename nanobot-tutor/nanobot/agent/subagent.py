@@ -5,7 +5,6 @@ import json
 import uuid
 from pathlib import Path
 from typing import Any
-
 from loguru import logger
 
 from nanobot.bus.events import InboundMessage
@@ -37,6 +36,7 @@ class SubagentManager:
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        log_context: bool = False,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -48,6 +48,7 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.log_context = log_context
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -89,6 +90,35 @@ class SubagentManager:
         logger.info(f"Spawned subagent [{task_id}]: {display_label}")
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
     
+    def _log_context(self, messages: list[dict], task_id: str) -> None:
+        """Log the full context being sent to the LLM."""
+        try:
+            log_dir = Path.home() / ".nanobot" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            filename = f"subagent_context_{task_id}.log"
+            log_file = log_dir / filename
+
+            from datetime import datetime
+            timestamp = datetime.now().isoformat()
+            
+            # Create a simplified entry focusing on the messages
+            entry = {
+                "timestamp": timestamp,
+                "task_id": task_id,
+                "model": self.model,
+                "message_count": len(messages),
+                "messages": messages
+            }
+            
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"--- SUBAGENT CONTEXT LOG ENTRY {timestamp} ---\n")
+                f.write(json.dumps(entry, indent=2, default=str, ensure_ascii=False))
+                f.write("\n\n")
+                
+        except Exception as e:
+            logger.error(f"Failed to write subagent context log: {e}")
+
     async def _run_subagent(
         self,
         task_id: str,
@@ -130,6 +160,9 @@ class SubagentManager:
             while iteration < max_iterations:
                 iteration += 1
                 
+                if self.log_context:
+                    self._log_context(messages, task_id)
+
                 response = await self.provider.chat(
                     messages=messages,
                     tools=tools.get_definitions(),
@@ -175,13 +208,38 @@ class SubagentManager:
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
             
+            # Log the final result if logging is enabled
+            if self.log_context:
+                self._log_final_result(final_result, task_id)
+
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
+            if self.log_context:
+                self._log_final_result(error_msg, task_id)
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
+
+    def _log_final_result(self, result: str, task_id: str) -> None:
+        """Log the final result of the subagent."""
+        try:
+            log_dir = Path.home() / ".nanobot" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            filename = f"subagent_context_{task_id}.log"
+            log_file = log_dir / filename
+
+            from datetime import datetime
+            timestamp = datetime.now().isoformat()
+            
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"--- SUBAGENT FINAL RESULT {timestamp} ---\n")
+                f.write(result)
+                f.write("\n\n")
+        except Exception as e:
+            logger.error(f"Failed to write subagent final result log: {e}")
     
     async def _announce_result(
         self,

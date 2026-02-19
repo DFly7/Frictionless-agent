@@ -34,10 +34,12 @@ class SpawnTool(Tool):
     def description(self) -> str:
         return (
             "Spawn a subagent to handle a task in the background. "
-            "Use this for complex or time-consuming tasks that can run independently. "
-            "The subagent will complete the task and report back when done."
+            "Returns immediately with a task ID. "
+            "The subagent runs asynchronously, so you can continue using other tools "
+            "or performing other actions in the meantime. "
+            "Do NOT make up the subagent's result - wait for the system notification."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -54,12 +56,13 @@ class SpawnTool(Tool):
             },
             "required": ["task"],
         }
-    
+
     async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
-        return await self._manager.spawn(
+        result = await self._manager.spawn(
             task=task,
             label=label,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
         )
+        return f"{result}\n(Subagent started asynchronously. You may proceed with other tools or tasks. Do not invent the subagent's result.)"

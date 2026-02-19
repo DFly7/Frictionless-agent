@@ -55,6 +55,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         log_context: bool = False,
+        log_sub_agent_context: bool = False,
     ):
         from nanobot.config.schema import ExecToolConfig
         from nanobot.cron.service import CronService
@@ -71,6 +72,7 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self.log_context = log_context
+        self.log_sub_agent_context = log_sub_agent_context
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -85,6 +87,7 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            log_context=log_sub_agent_context,
         )
         
         self._running = False
@@ -252,9 +255,27 @@ class AgentLoop:
                 messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
             else:
                 final_content = response.content
+                if self.log_context and final_content:
+                    self._log_final_result(final_content)
                 break
 
         return final_content, tools_used
+
+    def _log_final_result(self, result: str) -> None:
+        """Log the final result of the agent interaction."""
+        try:
+            log_dir = Path.home() / ".nanobot" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "context.log"
+            
+            timestamp = datetime.now().isoformat()
+            
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"--- AGENT FINAL RESULT {timestamp} ---\n")
+                f.write(result)
+                f.write("\n\n")
+        except Exception as e:
+            logger.error(f"Failed to write agent final result log: {e}")
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""

@@ -779,6 +779,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | `nanobot agent --no-markdown` | Show plain-text replies |
 | `nanobot agent --logs` | Show runtime logs during chat |
 | `nanobot agent --log-context` | Log full LLM context to `~/.nanobot/logs/context.log` |
+| `nanobot agent --log-sub-agent-context` | Log full subagent context to `~/.nanobot/logs/subagent_context_<task ID>.log` |
 | `nanobot gateway` | Start the gateway |
 | `nanobot status` | Show status |
 | `nanobot provider login openai-codex` | OAuth login for providers |

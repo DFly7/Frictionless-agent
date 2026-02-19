@@ -438,6 +438,7 @@ def agent(
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"),
     log_context: bool = typer.Option(False, "--log-context", help="Log full context sent to LLM to ~/.nanobot/logs/context.log"),
+    log_sub_agent_context: bool = typer.Option(False, "--log-sub-agent-context", help="Log full context sent to LLM by subagents to ~/.nanobot/logs/subagent_context_<task ID>.log"),
 ):
     """Interact with the agent directly."""
     from nanobot.config.loader import load_config
@@ -469,6 +470,7 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
         log_context=log_context,
+        log_sub_agent_context=log_sub_agent_context,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on
@@ -501,6 +503,19 @@ def agent(
         signal.signal(signal.SIGINT, _exit_on_sigint)
         
         async def run_interactive():
+            # Start background tasks for async events (subagents, cron)
+            loop_task = asyncio.create_task(agent_loop.run())
+            
+            # Handle async output from bus (e.g. subagent reports)
+            async def on_outbound(msg):
+                if msg.channel == "cli":
+                     # For subagent reports, we only want to show the formatted content
+                     # Avoid showing raw "nanobot" prefixes if they are already in the content
+                     _print_agent_response(msg.content, render_markdown=markdown)
+
+            bus.subscribe_outbound("cli", on_outbound)
+            dispatch_task = asyncio.create_task(bus.dispatch_outbound())
+
             try:
                 while True:
                     try:
@@ -527,6 +542,9 @@ def agent(
                         console.print("\nGoodbye!")
                         break
             finally:
+                agent_loop.stop()
+                bus.stop()
+                # Wait for tasks to cleanup if needed, or just let them be cancelled
                 await agent_loop.close_mcp()
         
         asyncio.run(run_interactive())

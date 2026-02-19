@@ -42,9 +42,29 @@ class Session:
         self.updated_at = datetime.now()
     
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
-        """Get recent messages in LLM format."""
+        """
+        Get recent messages in LLM format.
+        
+        Handles context window truncation by:
+        1. Slicing the last N messages
+        2. Removing any leading 'tool' messages (orphaned results)
+        """
+        if not self.messages:
+            return []
+
+        # 1. Slice raw messages
+        raw_slice = self.messages[-max_messages:]
+        
+        # 2. Skip leading tool messages (orphaned results whose parent Assistant call was truncated)
+        start_idx = 0
+        while start_idx < len(raw_slice) and raw_slice[start_idx]["role"] == "tool":
+            start_idx += 1
+            
+        effective_slice = raw_slice[start_idx:]
+        
+        # 3. Format for LLM
         history = []
-        for m in self.messages[-max_messages:]:
+        for m in effective_slice:
             msg = {"role": m["role"], "content": m["content"]}
             if "tool_calls" in m:
                 msg["tool_calls"] = m["tool_calls"]
