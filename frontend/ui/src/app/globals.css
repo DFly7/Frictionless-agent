@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Warm editorial theme — Frictionless Tutor */
+  /* Warm editorial theme — SmoothStudy.AI */
   --muted-foreground: #4a4a4a;
   --surface: #f5f2ed;
   --card: #ffffff;

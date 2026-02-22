@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Frictionless Tutor — Your AI Tutor That Remembers You",
+  title: "SmoothStudy.AI — Your AI Study Partner That Remembers You",
   description:
-    "One persistent AI tutor per student. Upload notes, chat, get quizzes on WhatsApp. It remembers your weak spots and reaches out when you need it.",
+    "One persistent AI study partner per student. Upload notes, chat, get quizzes on WhatsApp. It remembers your weak spots and reaches out when you need it.",
 };
 
 export default function RootLayout({

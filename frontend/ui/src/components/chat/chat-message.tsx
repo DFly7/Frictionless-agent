@@ -5,6 +5,9 @@ import { Card } from "@/components/ui/card";
 import { User, MessageSquare } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 interface ChatMessageProps {
   role: "user" | "assistant" | "system" | "data";
@@ -138,11 +141,15 @@ export function ChatMessage({ role, content }: ChatMessageProps) {
               : "bg-muted/50 border-border"
           )}
         >
-          <div className="leading-relaxed [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_pre]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold">
+          <div className="leading-relaxed overflow-x-auto [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_pre]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden">
             {isUser ? (
               <div className="whitespace-pre-wrap">{content}</div>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+                components={markdownComponents}
+              >
                 {content}
               </ReactMarkdown>
             )}

@@ -35,7 +35,7 @@ export default function DashboardPage() {
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center">
           <p className="text-muted-foreground animate-pulse">
-            Waking up your tutor…
+            Loading SmoothStudy.AI…
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             First time takes a few seconds
@@ -54,7 +54,7 @@ export default function DashboardPage() {
           </div>
           <div>
             <h1 className="font-display text-lg font-normal text-foreground">
-              Frictionless Tutor
+              SmoothStudy.AI
             </h1>
             <p className="text-xs text-muted-foreground">{email}</p>
           </div>

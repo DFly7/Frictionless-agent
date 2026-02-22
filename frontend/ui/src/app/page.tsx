@@ -17,7 +17,7 @@ export default function Home() {
               <MessageSquare className="h-4 w-4 text-primary-foreground" />
             </div>
             <span className="font-display text-xl font-normal text-foreground">
-              Frictionless Tutor
+              SmoothStudy.AI
             </span>
           </Link>
           <nav className="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
@@ -45,7 +45,7 @@ export default function Home() {
               href="/login"
               className="btn btn-primary px-5 py-2.5 text-sm"
             >
-              Get Your Tutor
+              Get Started
             </Link>
           </div>
         </div>
@@ -165,7 +165,7 @@ export default function Home() {
             </div>
             <div className="card p-8 border-l-4 border-l-primary">
               <h3 className="font-display text-xl md:text-2xl font-normal text-foreground">
-                Frictionless Tutor gives you one persistent AI.
+                SmoothStudy.AI gives you one persistent AI.
               </h3>
               <p className="mt-3 text-muted-foreground">
                 It reads your materials, tracks your progress, and reaches out
@@ -364,17 +364,17 @@ export default function Home() {
         <div className="mx-auto max-w-4xl px-6">
           <div className="card p-12 md:p-16 text-center border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-secondary/20">
             <h2 className="font-display text-2xl md:text-4xl font-normal text-foreground">
-              Ready for a tutor that remembers?
+              Ready to study smarter?
             </h2>
             <p className="mt-4 text-muted-foreground text-lg max-w-xl mx-auto">
-              Join students who save hours every week. Your tutor is waiting.
+              Join students who save hours every week. SmoothStudy.AI is waiting.
             </p>
             <div className="mt-8">
               <Link
                 href="/login"
                 className="btn btn-primary px-8 py-4 text-base"
               >
-                Get Your Tutor
+                Get Started
               </Link>
             </div>
             <p className="mt-4 text-xs text-muted-foreground">
@@ -392,11 +392,11 @@ export default function Home() {
               <MessageSquare className="h-3.5 w-3.5 text-primary-foreground" />
             </div>
             <span className="font-display text-sm text-foreground">
-              Frictionless Tutor
+              SmoothStudy.AI
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Your notes. Your memory. Your tutor.
+            Your notes. Your memory. Frictionless revision.
           </p>
         </div>
       </footer>

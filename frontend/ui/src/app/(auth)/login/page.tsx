@@ -36,7 +36,7 @@ export default function LoginPage() {
             <MessageSquare className="h-4 w-4 text-primary-foreground" />
           </div>
           <span className="font-display text-xl font-normal text-foreground">
-            Frictionless Tutor
+            SmoothStudy.AI
           </span>
         </Link>
         <Link
@@ -51,10 +51,10 @@ export default function LoginPage() {
         <div className="w-full max-w-md mx-auto">
           <div className="card p-8 md:p-10 border border-border/60 shadow-lg">
             <h1 className="font-display text-2xl md:text-3xl font-normal text-foreground">
-              Let&apos;s set up your tutor.
+              Let&apos;s get you started with SmoothStudy.AI.
             </h1>
             <p className="mt-2 text-muted-foreground">
-              It&apos;ll get smarter the more you share.
+              Your study partner gets smarter the more you share.
             </p>
             <div className="mt-8">
               <Auth
@@ -91,7 +91,7 @@ export default function LoginPage() {
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            No credit card required. Your tutor is free to start.
+            No credit card required. SmoothStudy.AI is free to start.
           </p>
         </div>
       </div>
