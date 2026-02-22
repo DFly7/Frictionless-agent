@@ -252,7 +252,7 @@ class AgentLoop:
                         )
                         self.sessions.save(session)
 
-                messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
+                # messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
             else:
                 final_content = response.content
                 if self.log_context and final_content:
