@@ -26,13 +26,16 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
+      - ./nanobot-tutor/workspace:/template/workspace:ro
       - ${HOME}/.nanobot/config.json:/config/config.json
-      - ${HOME}/.nanobot/workspace:/template/workspace:ro
     environment:
       - AGENT_IMAGE=nanobot-tutor
       - NETWORK_NAME=nanobot-net
       - HOST_DATA_DIR=${PWD}/data
       - HOST_CONFIG_PATH=${HOME}/.nanobot/config.json
+      # Optional: set to 1 to log full LLM context to ~/.nanobot/logs/context.log
+      - LOG_CONTEXT=${LOG_CONTEXT:-}
+      - LOG_SUB_AGENT_CONTEXT=${LOG_SUB_AGENT_CONTEXT:-}
     networks:
       - nanobot-net
 

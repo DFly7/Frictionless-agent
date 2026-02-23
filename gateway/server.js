@@ -116,7 +116,7 @@ async function ensureAgent(email) {
       const userDataDir = `${HOST_DATA_DIR}/${sanitized}`;
 
       // Pre-create data dir, copy config + workspace templates
-      // (gateway has HOST_DATA_DIR mounted at /data, templates at /template)
+      // Workspace from nanobot-tutor/workspace (repo defaults); config from ~/.nanobot/config.json (your keys)
       const localDataDir = `/data/${sanitized}`;
       const isNew = !fs.existsSync(localDataDir);
       fs.mkdirSync(path.join(localDataDir, "workspace", "memory"), { recursive: true });
@@ -130,12 +130,18 @@ async function ensureAgent(email) {
       }
 
       const binds = [`${userDataDir}:/root/.nanobot`];
+      const env = [
+        `NANOBOT_HTTP_PORT=${AGENT_PORT}`,
+        "NO_COLOR=1",
+        ...(process.env.LOG_CONTEXT ? ["LOG_CONTEXT=1"] : []),
+        ...(process.env.LOG_SUB_AGENT_CONTEXT ? ["LOG_SUB_AGENT_CONTEXT=1"] : []),
+      ];
       console.log(`[gateway] Creating container ${name} with binds:`, binds);
       const container = await docker.createContainer({
         Image: AGENT_IMAGE,
         name,
         Cmd: ["gateway"],
-        Env: [`NANOBOT_HTTP_PORT=${AGENT_PORT}`, "NO_COLOR=1"],
+        Env: env,
         HostConfig: {
           Binds: binds,
           NetworkMode: NETWORK_NAME,

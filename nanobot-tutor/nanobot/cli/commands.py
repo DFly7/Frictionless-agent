@@ -352,6 +352,8 @@ def gateway(
     cron = CronService(cron_store_path)
     
     # Create agent with cron service
+    log_context = os.environ.get("LOG_CONTEXT", "").lower() in ("1", "true", "yes")
+    log_sub_agent_context = os.environ.get("LOG_SUB_AGENT_CONTEXT", "").lower() in ("1", "true", "yes")
     agent = AgentLoop(
         bus=bus,
         provider=provider,
@@ -367,6 +369,8 @@ def gateway(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
+        log_context=log_context,
+        log_sub_agent_context=log_sub_agent_context,
     )
     
     # Set cron callback (needs agent)

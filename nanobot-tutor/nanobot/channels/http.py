@@ -4,7 +4,7 @@ Provides a thin JSON API so nanobot can be reached from browsers, curl, or
 any HTTP client.  Enable via config or by setting the NANOBOT_HTTP_PORT env var.
 
 Endpoints:
-    POST   /chat           {"message": "..."} → {"response": "..."}
+    POST   /chat           {"message": "..."} → {"response": "...", "history": [...]}
     POST   /uploads        {"files":[{"name":"...", "content_base64":"..."}]}
     GET    /health         → {"status": "ok"}
     GET    /memory         → {"memory": "...", "history": "..."}
@@ -35,7 +35,7 @@ class HttpChannel(BaseChannel):
     def __init__(self, config: Any, bus: MessageBus, workspace: Path | None = None):
         super().__init__(config, bus)
         self._workspace = workspace
-        self._pending: dict[str, asyncio.Future] = {}
+        self._pending: dict[str, dict] = {}  # request_id -> {messages: list, future: Future}
         self._app = web.Application(middlewares=[self._cors_middleware])
         self._runner: web.AppRunner | None = None
         self._setup_routes()
@@ -97,7 +97,10 @@ class HttpChannel(BaseChannel):
 
         try:
             out = await asyncio.wait_for(future, timeout=120)
-            return web.json_response({"response": out.content})
+            payload: dict[str, Any] = {"response": out.content}
+            if out.metadata and "session_history" in out.metadata:
+                payload["history"] = out.metadata["session_history"]
+            return web.json_response(payload)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
             return web.json_response({"error": "agent timed out"}, status=504)
