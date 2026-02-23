@@ -175,9 +175,18 @@ export function ChatInterface() {
     }
   };
 
-  const handleCloseTab = (tabId: string) => {
+  const handleCloseTab = async (tabId: string) => {
     const idx = tabs.findIndex((t) => t.id === tabId);
     if (idx === -1) return;
+    // Delete session from backend so it doesn't reappear on reload
+    try {
+      await fetch("/api/sessions", {
+        method: "DELETE",
+        headers: { "X-Session-ID": tabId },
+      });
+    } catch {
+      // Proceed with tab close even if delete fails
+    }
     const nextTabs = tabs.filter((t) => t.id !== tabId);
     if (nextTabs.length === 0) {
       const newTab: ChatTab = {

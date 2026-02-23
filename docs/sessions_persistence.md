@@ -65,7 +65,8 @@ Legacy sessions (no `X-Session-ID`) use `http_admin_gmail_com.jsonl` without a U
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/api/sessions` | List sessions for the current user. Proxies to gateway → agent. |
-| DELETE | `/api/conversations` | Clear a session. Requires `X-Session-ID` header. |
+| DELETE | `/api/sessions` | Archive to memory, then delete the session file. Requires `X-Session-ID`. Used when closing a tab. |
+| DELETE | `/api/conversations` | Clear a session (archive to memory, keep empty tab). Requires `X-Session-ID`. |
 
 **GET /sessions** response:
 ```json
@@ -111,12 +112,30 @@ const fetchSessions = useCallback(async () => {
 useEffect(() => { fetchSessions(); }, [fetchSessions]);
 ```
 
+### Clear vs Delete: The Difference
+
+| | **Clear** (`DELETE /conversations`) | **Delete** (`DELETE /sessions`) |
+|---|---|---|
+| **Trigger** | "Clear" button above input | X button on tab |
+| **Archiving** | Yes — consolidates into MEMORY.md + HISTORY.md | Yes — same consolidation first |
+| **Session file** | Kept (empty) | Removed from disk |
+| **On reload** | Tab appears as empty "New chat" | Tab does not appear |
+| **Use case** | "I'm done with this chat but want to keep the tab" | "Remove this chat entirely" |
+
+Both endpoints run memory consolidation (extract facts to MEMORY.md, summarize to HISTORY.md) before their respective actions. The only difference is whether the session file is kept or deleted.
+
 ### Clear conversation
 
 - **Button**: "Clear" above the input (disabled when empty or loading).
 - **Action**: `DELETE /api/conversations` with `X-Session-ID: activeTabId`.
-- **Backend**: Sends `/new` through the agent loop for that session—clears messages and consolidates into MEMORY.md/HISTORY.md.
+- **Backend**: Sends `/new` — consolidates into MEMORY.md/HISTORY.md, clears session, saves empty file.
 - **Frontend**: Resets the active tab's messages and title to "New chat".
+
+### Close tab (X button)
+
+- **Action**: `DELETE /api/sessions` with `X-Session-ID: tabId` before removing the tab from the UI.
+- **Backend**: 1) Sends `/new` — consolidates into MEMORY.md/HISTORY.md. 2) Deletes the session JSONL file.
+- **Result**: The session no longer appears on reload; conversation is archived before removal.
 
 ---
 

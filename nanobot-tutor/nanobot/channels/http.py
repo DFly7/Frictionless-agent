@@ -24,7 +24,7 @@ from typing import Any
 
 from aiohttp import web
 
-from nanobot.utils.helpers import get_sessions_path
+from nanobot.utils.helpers import get_sessions_path, safe_filename
 from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
@@ -55,6 +55,7 @@ class HttpChannel(BaseChannel):
         r.add_get("/memory", self._memory)
         r.add_get("/files", self._files)
         r.add_get("/sessions", self._sessions)
+        r.add_delete("/sessions", self._delete_session)
         r.add_delete("/conversations", self._clear_conversations)
 
     # ── CORS ─────────────────────────────────────────────────────────────
@@ -247,6 +248,42 @@ class HttpChannel(BaseChannel):
                 sessions.append(parsed)
         sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
         return web.json_response({"sessions": sessions})
+
+    async def _delete_session(self, request: web.Request) -> web.Response:
+        """Delete a session file from disk. Archives to MEMORY.md/HISTORY.md first, then deletes.
+        Requires X-Session-ID."""
+        sender_id = request.headers.get("X-User-ID", "anonymous")
+        session_id = request.headers.get("X-Session-ID", "").strip()
+        if not session_id:
+            return web.json_response({"error": "X-Session-ID required"}, status=400)
+        chat_id = f"{sender_id}:{session_id}"
+        request_id = uuid.uuid4().hex
+
+        # 1. Archive first: send /new to consolidate messages into MEMORY.md + HISTORY.md
+        future: asyncio.Future[OutboundMessage] = asyncio.get_running_loop().create_future()
+        self._pending[request_id] = future
+        await self._handle_message(
+            sender_id=sender_id, chat_id=chat_id, content="/new",
+            metadata={"_http_req": request_id},
+        )
+        try:
+            await asyncio.wait_for(future, timeout=30)
+        except asyncio.TimeoutError:
+            self._pending.pop(request_id, None)
+            # Proceed with delete even if consolidation timed out
+
+        # 2. Delete the session file
+        key = f"http:{sender_id}:{session_id}"
+        safe_key = safe_filename(key.replace(":", "_"))
+        path = get_sessions_path() / f"{safe_key}.jsonl"
+        if path.exists():
+            try:
+                path.unlink()
+                return web.json_response({"status": "deleted"})
+            except OSError as e:
+                logger.warning(f"Failed to delete session {path}: {e}")
+                return web.json_response({"error": "Failed to delete"}, status=500)
+        return web.json_response({"status": "deleted"})
 
     async def _clear_conversations(self, request: web.Request) -> web.Response:
         """Send /new through the agent loop — clears session and consolidates
