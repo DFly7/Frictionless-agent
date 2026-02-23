@@ -26,6 +26,7 @@ from nanobot.agent.subagent import SubagentManager
 from nanobot.config.schema import ExecToolConfig
 from nanobot.cron.service import CronService
 from nanobot.session.manager import Session, SessionManager
+from nanobot.utils.helpers import safe_filename
 
 
 class AgentLoop:
@@ -152,12 +153,13 @@ class AgentLoop:
             if isinstance(cron_tool, CronTool):
                 cron_tool.set_context(channel, chat_id)
 
-    def _log_context(self, messages: list[dict]) -> None:
+    def _log_context(self, messages: list[dict], session_key: str | None = None) -> None:
         """Log the full context being sent to the LLM."""
         try:
             log_dir = Path.home() / ".nanobot" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "context.log"
+            safe_key = safe_filename((session_key or "default").replace(":", "_"))
+            log_file = log_dir / f"context_{safe_key}.log"
             
             timestamp = datetime.now().isoformat()
             
@@ -177,13 +179,19 @@ class AgentLoop:
         except Exception as e:
             logger.error(f"Failed to write context log: {e}")
 
-    async def _run_agent_loop(self, initial_messages: list[dict], session: Session | None = None) -> tuple[str | None, list[str]]:
+    async def _run_agent_loop(
+        self,
+        initial_messages: list[dict],
+        session: Session | None = None,
+        session_key: str | None = None,
+    ) -> tuple[str | None, list[str]]:
         """
         Run the agent iteration loop.
 
         Args:
             initial_messages: Starting messages for the LLM conversation.
             session: Optional session object to persist intermediate messages.
+            session_key: Session key for per-session logging (e.g. context_<key>.log).
 
         Returns:
             Tuple of (final_content, list_of_tools_used).
@@ -192,13 +200,14 @@ class AgentLoop:
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        log_key = session_key or (session.key if session else None)
 
         while iteration < self.max_iterations:
             iteration += 1
 
             # Log the full context before calling LLM
             if self.log_context:
-                self._log_context(messages)
+                self._log_context(messages, session_key=log_key)
 
             response = await self.provider.chat(
                 messages=messages,
@@ -256,17 +265,18 @@ class AgentLoop:
             else:
                 final_content = response.content
                 if self.log_context and final_content:
-                    self._log_final_result(final_content)
+                    self._log_final_result(final_content, session_key=log_key)
                 break
 
         return final_content, tools_used
 
-    def _log_final_result(self, result: str) -> None:
+    def _log_final_result(self, result: str, session_key: str | None = None) -> None:
         """Log the final result of the agent interaction."""
         try:
             log_dir = Path.home() / ".nanobot" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "context.log"
+            safe_key = safe_filename((session_key or "default").replace(":", "_"))
+            log_file = log_dir / f"context_{safe_key}.log"
             
             timestamp = datetime.now().isoformat()
             
@@ -383,7 +393,9 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
         )
-        final_content, tools_used = await self._run_agent_loop(initial_messages, session=session)
+        final_content, tools_used = await self._run_agent_loop(
+            initial_messages, session=session, session_key=key
+        )
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
@@ -441,7 +453,9 @@ class AgentLoop:
             channel=origin_channel,
             chat_id=origin_chat_id,
         )
-        final_content, _ = await self._run_agent_loop(initial_messages, session=session)
+        final_content, _ = await self._run_agent_loop(
+            initial_messages, session=session, session_key=session_key
+        )
 
         if final_content is None:
             final_content = "Background task completed."

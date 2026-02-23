@@ -185,12 +185,17 @@ async function proxyToAgent(req, res) {
   const agentUrl = `http://${agentName}:${AGENT_PORT}${req.path}`;
 
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      "X-User-ID": sanitizeEmail(email),
+    };
+    if (req.headers["x-session-id"]) {
+      headers["X-Session-ID"] = req.headers["x-session-id"];
+    }
+
     const fetchOpts = {
       method: req.method,
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-ID": sanitizeEmail(email),
-      },
+      headers,
     };
 
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -219,6 +224,7 @@ app.all("/chat", proxyToAgent);
 app.all("/files", proxyToAgent);
 app.all("/uploads", proxyToAgent);
 app.all("/memory", proxyToAgent);
+app.all("/sessions", proxyToAgent);
 app.all("/conversations", proxyToAgent);
 
 // ── Shutdown ─────────────────────────────────────────────────────────────

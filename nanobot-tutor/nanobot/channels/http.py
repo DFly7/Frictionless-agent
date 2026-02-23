@@ -9,11 +9,13 @@ Endpoints:
     GET    /health         → {"status": "ok"}
     GET    /memory         → {"memory": "...", "history": "..."}
     GET    /files          → {"files": [...]}
+    GET    /sessions       → {"sessions": [{session_id, title, updated_at, messages}]}
     DELETE /conversations  → {"status": "cleared"}
 """
 
 import asyncio
 import base64
+import json
 import os
 import re
 import uuid
@@ -21,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+
+from nanobot.utils.helpers import get_sessions_path
 from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
@@ -50,6 +54,7 @@ class HttpChannel(BaseChannel):
         r.add_get("/health", self._health)
         r.add_get("/memory", self._memory)
         r.add_get("/files", self._files)
+        r.add_get("/sessions", self._sessions)
         r.add_delete("/conversations", self._clear_conversations)
 
     # ── CORS ─────────────────────────────────────────────────────────────
@@ -65,7 +70,7 @@ class HttpChannel(BaseChannel):
                 resp = exc
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-User-ID"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-User-ID, X-Session-ID"
         return resp
 
     async def _options(self, _r: web.Request) -> web.Response:
@@ -84,7 +89,8 @@ class HttpChannel(BaseChannel):
             return web.json_response({"error": "message required"}, status=400)
 
         sender_id = request.headers.get("X-User-ID", "anonymous")
-        chat_id = sender_id
+        session_id = request.headers.get("X-Session-ID", "").strip()
+        chat_id = f"{sender_id}:{session_id}" if session_id else sender_id
         request_id = uuid.uuid4().hex
 
         future: asyncio.Future[OutboundMessage] = asyncio.get_running_loop().create_future()
@@ -183,11 +189,79 @@ class HttpChannel(BaseChannel):
                     files.append(str(p.relative_to(self._workspace)))
         return web.json_response({"files": files})
 
+    def _parse_session_file(self, path: Path, sender_id: str) -> dict[str, Any] | None:
+        """Parse a session JSONL file, return {session_id, title, updated_at, messages} or None."""
+        stem = path.stem
+        # Session key format: http_user_id_session_id or http_user_id (legacy)
+        # Extract session_id: UUID at end, or "default" for legacy
+        uuid_match = re.search(
+            r"_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            stem,
+            re.I,
+        )
+        session_id = uuid_match.group(1) if uuid_match else "default"
+        # Only include sessions for this user (prefix http_{sender_id})
+        prefix = f"http_{sender_id}"
+        if not stem.startswith(prefix):
+            return None
+        try:
+            messages: list[dict] = []
+            updated_at = ""
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if data.get("_type") == "metadata":
+                        updated_at = data.get("updated_at", "")
+                    elif data.get("role") in ("user", "assistant"):
+                        messages.append({
+                            "id": str(uuid.uuid4()),
+                            "role": data["role"],
+                            "content": data.get("content", ""),
+                        })
+            first_user = next((m for m in messages if m["role"] == "user"), None)
+            text = (first_user.get("content") or "").strip() if first_user else ""
+            title = (text[:25] + "…") if len(text) > 28 else (text or "New chat")
+            return {
+                "session_id": session_id,
+                "title": title or "New chat",
+                "updated_at": updated_at,
+                "messages": messages,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse session {path}: {e}")
+            return None
+
+    async def _sessions(self, request: web.Request) -> web.Response:
+        """List sessions from disk (mounted volume), same pattern as /files."""
+        sender_id = request.headers.get("X-User-ID", "anonymous")
+        sessions_dir = get_sessions_path()
+        if not sessions_dir.exists():
+            return web.json_response({"sessions": []})
+        sessions: list[dict[str, Any]] = []
+        for path in sorted(sessions_dir.glob("*.jsonl")):
+            parsed = self._parse_session_file(path, sender_id)
+            if parsed:
+                sessions.append(parsed)
+        sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
+        return web.json_response({"sessions": sessions})
+
     async def _clear_conversations(self, request: web.Request) -> web.Response:
         """Send /new through the agent loop — clears session and consolidates
         old messages into MEMORY.md + HISTORY.md."""
         sender_id = request.headers.get("X-User-ID", "anonymous")
-        chat_id = sender_id
+        session_id = request.headers.get("X-Session-ID", "").strip()
+        # Support sessionId in body for clients that send JSON (e.g. POST with body)
+        if not session_id:
+            try:
+                if request.can_read_body():
+                    body = await request.json()
+                    session_id = (body.get("sessionId") or "").strip()
+            except Exception:
+                pass
+        chat_id = f"{sender_id}:{session_id}" if session_id else sender_id
         request_id = uuid.uuid4().hex
 
         future: asyncio.Future[OutboundMessage] = asyncio.get_running_loop().create_future()

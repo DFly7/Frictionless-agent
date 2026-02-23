@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Upload, Paperclip, FileIcon, Plus, X } from "lucide-react";
+import { Send, Upload, Paperclip, FileIcon, Plus, X, Trash2 } from "lucide-react";
 import { ChatMessage } from "./chat-message";
 
 interface Message {
@@ -19,6 +19,8 @@ interface ChatTab {
   messages: Message[];
 }
 
+const MAX_TABS = 5;
+
 function getTabTitle(messages: Message[]): string {
   const firstUser = messages.find((m) => m.role === "user");
   if (!firstUser) return "New chat";
@@ -32,10 +34,11 @@ export function ChatInterface() {
   ]);
   const [activeTabId, setActiveTabId] = useState<string>(tabs[0].id);
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [loadingTabIds, setLoadingTabIds] = useState<Set<string>>(new Set());
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
   const messages = activeTab.messages;
+  const isActiveTabLoading = loadingTabIds.has(activeTabId);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
@@ -43,7 +46,7 @@ export function ChatInterface() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isActiveTabLoading) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -52,7 +55,7 @@ export function ChatInterface() {
     };
     const newMessages = [...messages, userMessage];
     setInput("");
-    setIsLoading(true);
+    setLoadingTabIds((prev) => new Set(prev).add(activeTabId));
 
     setTabs((prev) =>
       prev.map((t) =>
@@ -65,7 +68,10 @@ export function ChatInterface() {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-ID": activeTab.id,
+        },
         body: JSON.stringify({
           messages: newMessages,
         }),
@@ -129,11 +135,16 @@ export function ChatInterface() {
         )
       );
     } finally {
-      setIsLoading(false);
+      setLoadingTabIds((prev) => {
+        const next = new Set(prev);
+        next.delete(activeTabId);
+        return next;
+      });
     }
   };
 
   const handleNewChat = () => {
+    if (tabs.length >= MAX_TABS) return;
     const newTab: ChatTab = {
       id: crypto.randomUUID(),
       title: "New chat",
@@ -141,6 +152,27 @@ export function ChatInterface() {
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTab.id);
+  };
+
+  const handleClearConversation = async () => {
+    if (isActiveTabLoading) return;
+    try {
+      const res = await fetch("/api/conversations", {
+        method: "DELETE",
+        headers: { "X-Session-ID": activeTabId },
+      });
+      if (res.ok) {
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === activeTabId
+              ? { ...t, messages: [], title: "New chat" }
+              : t
+          )
+        );
+      }
+    } catch {
+      // Silent fail
+    }
   };
 
   const handleCloseTab = (tabId: string) => {
@@ -190,9 +222,34 @@ export function ChatInterface() {
     }
   }, []);
 
+  const fetchSessions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/sessions");
+      if (res.ok) {
+        const data = await res.json();
+        const sessions = data.sessions as Array<{ session_id: string; title: string; messages: Message[] }>;
+        if (Array.isArray(sessions) && sessions.length > 0) {
+          const loadedTabs: ChatTab[] = sessions.slice(0, MAX_TABS).map((s) => ({
+            id: s.session_id,
+            title: s.title || "New chat",
+            messages: s.messages || [],
+          }));
+          setTabs(loadedTabs);
+          setActiveTabId(loadedTabs[0].id);
+        }
+      }
+    } catch {
+      // Silent fail
+    }
+  }, []);
+
   useEffect(() => {
     fetchFiles();
   }, [fetchFiles]);
+
+  useEffect(() => {
+    fetchSessions();
+  }, [fetchSessions]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -292,8 +349,10 @@ export function ChatInterface() {
           variant="ghost"
           size="icon-sm"
           onClick={handleNewChat}
+          disabled={tabs.length >= MAX_TABS}
           className="shrink-0 rounded-none border-l border-border"
           aria-label="New chat"
+          title={tabs.length >= MAX_TABS ? `Maximum ${MAX_TABS} tabs` : "New chat"}
         >
           <Plus className="h-4 w-4" />
         </Button>
@@ -385,7 +444,7 @@ export function ChatInterface() {
                 <ChatMessage key={m.id} role={m.role} content={m.content} />
               ))}
 
-              {isLoading && (
+              {isActiveTabLoading && (
                 <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
                   <span className="animate-pulse">Thinking…</span>
                 </div>
@@ -396,6 +455,20 @@ export function ChatInterface() {
 
           <div className="p-4 border-t border-border bg-background/95 backdrop-blur-sm">
             <div className="max-w-3xl mx-auto">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearConversation}
+                  disabled={isActiveTabLoading || messages.length === 0}
+                  className="text-muted-foreground hover:text-foreground"
+                  title="Clear conversation"
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Clear
+                </Button>
+              </div>
               <form onSubmit={handleSubmit} className="flex gap-2 items-end">
                 <Button
                   type="button"
@@ -404,7 +477,7 @@ export function ChatInterface() {
                   className="shrink-0"
                   title="Upload notes"
                   onClick={handleFileClick}
-                  disabled={isUploading || isLoading}
+                  disabled={isUploading || isActiveTabLoading}
                 >
                   <Paperclip className="h-4 w-4" />
                 </Button>
@@ -414,13 +487,13 @@ export function ChatInterface() {
                   onChange={handleInputChange}
                   placeholder="Ask anything about your materials…"
                   className="flex-1 min-h-[44px]"
-                  disabled={isLoading}
+                  disabled={isActiveTabLoading}
                 />
 
                 <Button
                   type="submit"
                   size="icon"
-                  disabled={isLoading || !(input || "").trim()}
+                  disabled={isActiveTabLoading || !(input || "").trim()}
                   className="shrink-0"
                 >
                   <Send className="h-4 w-4" />

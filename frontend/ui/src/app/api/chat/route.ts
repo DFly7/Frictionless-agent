@@ -38,14 +38,20 @@ export async function POST(req: Request) {
         }
 
         const email = user.email || "";
+        const sessionId = req.headers.get("X-Session-ID") || undefined;
         const gatewayUrl = process.env.GATEWAY_URL || "http://127.0.0.1:8080";
+
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-Email": email,
+        };
+        if (sessionId) {
+            headers["X-Session-ID"] = sessionId;
+        }
 
         const gatewayResponse = await fetch(`${gatewayUrl}/chat`, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-User-Email": email,
-            },
+            headers,
             body: JSON.stringify({
                 message: lastMessage.content,
             }),
