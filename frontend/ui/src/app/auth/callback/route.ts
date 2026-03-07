@@ -20,6 +20,6 @@ export async function GET(request: Request) {
     }
   }
 
-  // Redirect to an error page if there's an issue
-  return NextResponse.redirect(`${origin}/login?error=auth-code-error`);
+  // Redirect to error page - use baseUrl so we never send users to 0.0.0.0
+  return NextResponse.redirect(`${baseUrl}/login?error=auth-code-error`);
 }
