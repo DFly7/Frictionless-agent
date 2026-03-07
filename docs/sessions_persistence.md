@@ -62,13 +62,14 @@ Legacy sessions (no `X-Session-ID`) use `http_admin_gmail_com.jsonl` without a U
 
 ## API Endpoints
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/api/sessions` | List sessions for the current user. Proxies to gateway → agent. |
-| DELETE | `/api/sessions` | Archive to memory, then delete the session file. Requires `X-Session-ID`. Used when closing a tab. |
-| DELETE | `/api/conversations` | Clear a session (archive to memory, keep empty tab). Requires `X-Session-ID`. |
+| Method | Endpoint             | Purpose                                                                                            |
+| ------ | -------------------- | -------------------------------------------------------------------------------------------------- |
+| GET    | `/api/sessions`      | List sessions for the current user. Proxies to gateway → agent.                                    |
+| DELETE | `/api/sessions`      | Archive to memory, then delete the session file. Requires `X-Session-ID`. Used when closing a tab. |
+| DELETE | `/api/conversations` | Clear a session (archive to memory, keep empty tab). Requires `X-Session-ID`.                      |
 
 **GET /sessions** response:
+
 ```json
 {
   "sessions": [
@@ -99,7 +100,7 @@ const fetchSessions = useCallback(async () => {
     const sessions = data.sessions;
     if (Array.isArray(sessions) && sessions.length > 0) {
       const loadedTabs = sessions.slice(0, MAX_TABS).map((s) => ({
-        id: s.session_id,   // Tab ID = backend session ID
+        id: s.session_id, // Tab ID = backend session ID
         title: s.title || "New chat",
         messages: s.messages || [],
       }));
@@ -109,18 +110,20 @@ const fetchSessions = useCallback(async () => {
   }
 }, []);
 
-useEffect(() => { fetchSessions(); }, [fetchSessions]);
+useEffect(() => {
+  fetchSessions();
+}, [fetchSessions]);
 ```
 
 ### Clear vs Delete: The Difference
 
-| | **Clear** (`DELETE /conversations`) | **Delete** (`DELETE /sessions`) |
-|---|---|---|
-| **Trigger** | "Clear" button above input | X button on tab |
-| **Archiving** | Yes — consolidates into MEMORY.md + HISTORY.md | Yes — same consolidation first |
-| **Session file** | Kept (empty) | Removed from disk |
-| **On reload** | Tab appears as empty "New chat" | Tab does not appear |
-| **Use case** | "I'm done with this chat but want to keep the tab" | "Remove this chat entirely" |
+|                  | **Clear** (`DELETE /conversations`)                | **Delete** (`DELETE /sessions`) |
+| ---------------- | -------------------------------------------------- | ------------------------------- |
+| **Trigger**      | "Clear" button above input                         | X button on tab                 |
+| **Archiving**    | Yes — consolidates into MEMORY.md + HISTORY.md     | Yes — same consolidation first  |
+| **Session file** | Kept (empty)                                       | Removed from disk               |
+| **On reload**    | Tab appears as empty "New chat"                    | Tab does not appear             |
+| **Use case**     | "I'm done with this chat but want to keep the tab" | "Remove this chat entirely"     |
 
 Both endpoints run memory consolidation (extract facts to MEMORY.md, summarize to HISTORY.md) before their respective actions. The only difference is whether the session file is kept or deleted.
 

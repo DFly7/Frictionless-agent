@@ -10,9 +10,15 @@ import { MessageSquare } from "lucide-react";
 
 export default function LoginPage() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const redirectTo = `${
-    typeof window !== "undefined" ? window.location.origin : ""
-  }/auth/callback`;
+  // const redirectTo = `${
+  //   typeof window !== "undefined" ? window.location.origin : ""
+  // }/auth/callback`;
+
+// use env variable for redirect to, this is to combat the issue with redirct while using cloudflare tunnel
+  const redirectTo = process.env.NEXT_PUBLIC_SITE_URL 
+  ? `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
+  : "https://smoothstudy.ai/auth/callback";
+
   const router = useRouter();
 
   useEffect(() => {
