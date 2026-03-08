@@ -2,16 +2,23 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
-import { User, MessageSquare } from "lucide-react";
+import {
+  AlertCircle,
+  BrainCircuit,
+  CheckCircle2,
+  MessageSquare,
+  Settings2,
+  User,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { AssistantTurn, ChatTurn } from "./chat-model";
 
 interface ChatMessageProps {
-  role: "user" | "assistant" | "system" | "data";
-  content: string;
+  turn: ChatTurn;
 }
 
 const markdownComponents = {
@@ -92,8 +99,92 @@ const markdownComponents = {
   ),
 };
 
-export function ChatMessage({ role, content }: ChatMessageProps) {
-  const isUser = role === "user";
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="leading-relaxed overflow-x-auto [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_pre]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={markdownComponents}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function ToolStatusIcon({ status }: { status: AssistantTurn["toolCalls"][number]["status"] }) {
+  if (status === "success") {
+    return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+  }
+
+  if (status === "error") {
+    return <AlertCircle className="h-4 w-4 text-destructive" />;
+  }
+
+  return <Settings2 className="h-4 w-4 animate-pulse text-muted-foreground" />;
+}
+
+function AssistantTurnContent({ turn }: { turn: AssistantTurn }) {
+  const hasThinking = Boolean(turn.reasoning?.trim());
+
+  return (
+    <div className="space-y-3">
+      {hasThinking && (
+        <details className="rounded-md border border-border bg-background/70">
+          <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <BrainCircuit className="h-4 w-4" />
+            Thinking
+          </summary>
+          <div className="border-t border-border px-3 py-3 text-sm text-muted-foreground">
+            <div className="whitespace-pre-wrap">{turn.reasoning}</div>
+          </div>
+        </details>
+      )}
+
+      {turn.toolCalls.length > 0 && (
+        <div className="space-y-2">
+          {turn.toolCalls.map((toolCall) => (
+            <div
+              key={toolCall.id}
+              className="rounded-md border border-border bg-background/70"
+            >
+              <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm">
+                <ToolStatusIcon status={toolCall.status} />
+                <span className="font-medium">{toolCall.name}</span>
+              </div>
+              <div className="px-3 py-3">
+                <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+                  <code>{toolCall.argumentsText}</code>
+                </pre>
+                {toolCall.result && (
+                  <div className="mt-3 rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                    <div className="mb-1 text-xs font-medium uppercase tracking-wide">
+                      Observation
+                    </div>
+                    <pre className="whitespace-pre-wrap break-words font-mono text-xs">
+                      {toolCall.result}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {turn.finalContent && <MarkdownContent content={turn.finalContent} />}
+
+      {turn.status === "streaming" && !turn.finalContent && (
+        <div className="text-sm text-muted-foreground animate-pulse">Working...</div>
+      )}
+    </div>
+  );
+}
+
+export function ChatMessage({ turn }: ChatMessageProps) {
+  const isUser = turn.kind === "user";
+  const assistantTurn = turn.kind === "assistant_turn" ? turn : null;
 
   return (
     <div
@@ -141,19 +232,11 @@ export function ChatMessage({ role, content }: ChatMessageProps) {
               : "bg-muted/50 border-border"
           )}
         >
-          <div className="leading-relaxed overflow-x-auto [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_pre]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden">
-            {isUser ? (
-              <div className="whitespace-pre-wrap">{content}</div>
-            ) : (
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex]}
-                components={markdownComponents}
-              >
-                {content}
-              </ReactMarkdown>
-            )}
-          </div>
+          {isUser ? (
+            <div className="whitespace-pre-wrap">{turn.content}</div>
+          ) : (
+            assistantTurn && <AssistantTurnContent turn={assistantTurn} />
+          )}
         </Card>
       </div>
     </div>

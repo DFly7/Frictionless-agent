@@ -5,6 +5,7 @@ any HTTP client.  Enable via config or by setting the NANOBOT_HTTP_PORT env var.
 
 Endpoints:
     POST   /chat           {"message": "..."} → {"response": "...", "history": [...]}
+    POST   /chat/stream    {"message": "..."} → SSE event stream
     POST   /uploads        {"files":[{"name":"...", "content_base64":"..."}]}
     GET    /health         → {"status": "ok"}
     GET    /memory         → {"memory": "...", "history": "..."}
@@ -39,7 +40,8 @@ class HttpChannel(BaseChannel):
     def __init__(self, config: Any, bus: MessageBus, workspace: Path | None = None):
         super().__init__(config, bus)
         self._workspace = workspace
-        self._pending: dict[str, dict] = {}  # request_id -> {messages: list, future: Future}
+        self._pending: dict[str, asyncio.Future[OutboundMessage]] = {}
+        self._stream_states: dict[str, dict[str, Any]] = {}
         self._app = web.Application(middlewares=[self._cors_middleware])
         self._runner: web.AppRunner | None = None
         self._setup_routes()
@@ -50,6 +52,7 @@ class HttpChannel(BaseChannel):
         r = self._app.router
         r.add_route("OPTIONS", "/{path:.*}", self._options)
         r.add_post("/chat", self._chat)
+        r.add_post("/chat/stream", self._chat_stream)
         r.add_post("/uploads", self._uploads)
         r.add_get("/health", self._health)
         r.add_get("/memory", self._memory)
@@ -79,19 +82,48 @@ class HttpChannel(BaseChannel):
 
     # ── handlers ─────────────────────────────────────────────────────────
 
+    def _build_chat_context(self, request: web.Request, body: dict[str, Any]) -> tuple[str, str, str]:
+        message = (body.get("message") or "").strip()
+        sender_id = request.headers.get("X-User-ID", "anonymous")
+        session_id = request.headers.get("X-Session-ID", "").strip()
+        chat_id = f"{sender_id}:{session_id}" if session_id else sender_id
+        return message, sender_id, chat_id
+
+    def _serialize_session_message(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        role = data.get("role")
+        if role not in ("user", "assistant", "tool"):
+            return None
+
+        serialized: dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "role": role,
+            "content": data.get("content", ""),
+        }
+
+        for key in ("timestamp", "tool_calls", "tool_call_id", "name", "reasoning_content", "tools_used"):
+            if key in data:
+                serialized[key] = data.get(key)
+
+        return serialized
+
+    async def _write_sse_event(
+        self,
+        response: web.StreamResponse,
+        event_name: str,
+        payload: dict[str, Any],
+    ) -> None:
+        body = f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        await response.write(body.encode("utf-8"))
+
     async def _chat(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "invalid JSON"}, status=400)
 
-        message = (body.get("message") or "").strip()
+        message, sender_id, chat_id = self._build_chat_context(request, body)
         if not message:
             return web.json_response({"error": "message required"}, status=400)
-
-        sender_id = request.headers.get("X-User-ID", "anonymous")
-        session_id = request.headers.get("X-Session-ID", "").strip()
-        chat_id = f"{sender_id}:{session_id}" if session_id else sender_id
         request_id = uuid.uuid4().hex
 
         future: asyncio.Future[OutboundMessage] = asyncio.get_running_loop().create_future()
@@ -111,6 +143,82 @@ class HttpChannel(BaseChannel):
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
             return web.json_response({"error": "agent timed out"}, status=504)
+
+    async def _chat_stream(self, request: web.Request) -> web.StreamResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        message, sender_id, chat_id = self._build_chat_context(request, body)
+        if not message:
+            return web.json_response({"error": "message required"}, status=400)
+
+        request_id = uuid.uuid4().hex
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._stream_states[request_id] = {"queue": queue, "completed": False}
+
+        async def emit_event(event: dict[str, Any]) -> None:
+            state = self._stream_states.get(request_id)
+            if not state:
+                return
+            if event.get("type") == "assistant_completed":
+                state["completed"] = True
+            await queue.put(event)
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+
+        try:
+            await self._handle_message(
+                sender_id=sender_id,
+                chat_id=chat_id,
+                content=message,
+                metadata={
+                    "_http_req": request_id,
+                    "_http_stream_id": request_id,
+                    "_http_stream_callback": emit_event,
+                },
+            )
+
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=120)
+                except asyncio.TimeoutError:
+                    await self._write_sse_event(
+                        response,
+                        "error",
+                        {"type": "error", "error": "agent timed out"},
+                    )
+                    break
+
+                if event is None:
+                    break
+
+                event_type = event.get("type", "message")
+                await self._write_sse_event(response, event_type, event)
+                if event_type in {"assistant_completed", "error"}:
+                    break
+        except Exception as exc:
+            logger.error(f"Streaming chat failed: {exc}")
+            await self._write_sse_event(
+                response,
+                "error",
+                {"type": "error", "error": str(exc)},
+            )
+        finally:
+            self._stream_states.pop(request_id, None)
+            await response.write_eof()
+
+        return response
 
     async def _uploads(self, request: web.Request) -> web.Response:
         if not self._workspace:
@@ -216,12 +324,10 @@ class HttpChannel(BaseChannel):
                     data = json.loads(line)
                     if data.get("_type") == "metadata":
                         updated_at = data.get("updated_at", "")
-                    elif data.get("role") in ("user", "assistant"):
-                        messages.append({
-                            "id": str(uuid.uuid4()),
-                            "role": data["role"],
-                            "content": data.get("content", ""),
-                        })
+                    else:
+                        serialized = self._serialize_session_message(data)
+                        if serialized:
+                            messages.append(serialized)
             first_user = next((m for m in messages if m["role"] == "user"), None)
             text = (first_user.get("content") or "").strip() if first_user else ""
             title = (text[:25] + "…") if len(text) > 28 else (text or "New chat")
@@ -338,6 +444,16 @@ class HttpChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         request_id = (msg.metadata or {}).get("_http_req")
+        stream_id = (msg.metadata or {}).get("_http_stream_id")
+
+        if stream_id and stream_id in self._stream_states:
+            state = self._stream_states.get(stream_id)
+            if state and not state.get("completed"):
+                queue = state["queue"]
+                await queue.put({"type": "assistant_content_delta", "delta": msg.content})
+                await queue.put({"type": "assistant_completed", "finalContent": msg.content})
+                state["completed"] = True
+
         if request_id:
             future = self._pending.pop(request_id, None)
         else:

@@ -6,26 +6,99 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Send, Upload, Paperclip, FileIcon, Plus, X, Trash2 } from "lucide-react";
 import { ChatMessage } from "./chat-message";
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-}
+import {
+  applyStreamEvent,
+  AssistantTurn,
+  ChatStreamEvent,
+  ChatTurn,
+  createEmptyAssistantTurn,
+  groupSessionMessages,
+  SessionMessage,
+} from "./chat-model";
 
 interface ChatTab {
   id: string;
   title: string;
-  messages: Message[];
+  messages: ChatTurn[];
 }
 
 const MAX_TABS = 5;
 
-function getTabTitle(messages: Message[]): string {
-  const firstUser = messages.find((m) => m.role === "user");
+function getTabTitle(messages: ChatTurn[]): string {
+  const firstUser = messages.find((m) => m.kind === "user");
   if (!firstUser) return "New chat";
   const text = firstUser.content.trim();
   return text.length > 28 ? `${text.slice(0, 25)}…` : text || "New chat";
+}
+
+function parseSseChunk(chunk: string): ChatStreamEvent | null {
+  const lines = chunk
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  const dataLines = lines
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(dataLines.join("\n")) as ChatStreamEvent;
+  } catch {
+    return null;
+  }
+}
+
+async function readChatStream(
+  response: Response,
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  if (!response.body) {
+    throw new Error("Missing response body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const chunk = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const event = parseSseChunk(chunk);
+      if (event) {
+        onEvent(event);
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+
+  const finalChunk = buffer.trim();
+  if (finalChunk) {
+    const event = parseSseChunk(finalChunk);
+    if (event) {
+      onEvent(event);
+    }
+  }
+}
+
+function createErrorTurn(message: string): ChatTurn {
+  return {
+    ...createEmptyAssistantTurn(),
+    finalContent: message,
+    status: "error",
+  };
 }
 
 export function ChatInterface() {
@@ -44,100 +117,132 @@ export function ChatInterface() {
     setInput(e.target.value);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isActiveTabLoading) return;
+  const updateTab = useCallback(
+    (tabId: string, updater: (tab: ChatTab) => ChatTab) => {
+      setTabs((prev) => prev.map((tab) => (tab.id === tabId ? updater(tab) : tab)));
+    },
+    [],
+  );
 
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: input,
-    };
-    const newMessages = [...messages, userMessage];
-    setInput("");
-    setLoadingTabIds((prev) => new Set(prev).add(activeTabId));
-
-    setTabs((prev) =>
-      prev.map((t) =>
-        t.id === activeTabId
-          ? { ...t, messages: newMessages, title: getTabTitle(newMessages) }
-          : t
-      )
-    );
-
-    try {
+  const runJsonFallback = useCallback(
+    async (tabId: string, userContent: string): Promise<void> => {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-ID": activeTab.id,
+          "X-Session-ID": tabId,
         },
         body: JSON.stringify({
-          messages: newMessages,
+          messages: [{ role: "user", content: userContent }],
         }),
       });
 
       if (!res.ok) {
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === activeTabId
-              ? {
-                  ...t,
-                  messages: [
-                    ...newMessages,
-                    {
-                      id: crypto.randomUUID(),
-                      role: "assistant",
-                      content: "Something went wrong. Try again.",
-                    },
-                  ],
-                }
-              : t
-          )
-        );
-        return;
+        throw new Error("Fallback request failed");
       }
 
       const data = await res.json();
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: data.response,
-      };
+      updateTab(tabId, (tab) => {
+        const fallbackAssistantTurn: AssistantTurn = {
+          ...createEmptyAssistantTurn(),
+          finalContent: data.response || "Something went wrong. Try again.",
+          status: "completed",
+        };
+        const turns: ChatTurn[] = Array.isArray(data.history)
+          ? groupSessionMessages(data.history as SessionMessage[])
+          : [...tab.messages.slice(0, -1), fallbackAssistantTurn];
 
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === activeTabId
-            ? {
-                ...t,
-                messages: [...newMessages, assistantMessage],
-                title: getTabTitle(newMessages),
-              }
-            : t
-        )
+        return {
+          ...tab,
+          messages: turns,
+          title: getTabTitle(turns),
+        };
+      });
+    },
+    [updateTab],
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isActiveTabLoading) return;
+
+    const tabId = activeTabId;
+    const userContent = input;
+    const userMessage: ChatTurn = {
+      id: crypto.randomUUID(),
+      kind: "user",
+      content: userContent,
+    };
+    const assistantTurn = createEmptyAssistantTurn();
+    const optimisticMessages = [...messages, userMessage, assistantTurn];
+    setInput("");
+    setLoadingTabIds((prev) => new Set(prev).add(tabId));
+
+    updateTab(tabId, (tab) => ({
+      ...tab,
+      messages: optimisticMessages,
+      title: getTabTitle(optimisticMessages),
+    }));
+
+    try {
+      const res = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-ID": tabId,
+        },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: userContent }],
+        }),
+      });
+
+      const isEventStream = (res.headers.get("content-type") || "").includes(
+        "text/event-stream",
       );
+      let receivedStreamEvent = false;
+
+      if (!res.ok || !res.body || !isEventStream) {
+        throw new Error("Streaming unavailable");
+      }
+
+      await readChatStream(res, (event) => {
+        receivedStreamEvent = true;
+        updateTab(tabId, (tab) => {
+          const nextMessages = tab.messages.map((message) => {
+            if (message.id !== assistantTurn.id || message.kind !== "assistant_turn") {
+              return message;
+            }
+            return applyStreamEvent(message, event);
+          });
+
+          return {
+            ...tab,
+            messages: nextMessages,
+            title: getTabTitle(nextMessages),
+          };
+        });
+      });
+
+      if (!receivedStreamEvent) {
+        await runJsonFallback(tabId, userContent);
+      }
     } catch {
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === activeTabId
-            ? {
-                ...t,
-                messages: [
-                  ...newMessages,
-                  {
-                    id: crypto.randomUUID(),
-                    role: "assistant",
-                    content: "Something went wrong. Try again.",
-                  },
-                ],
-              }
-            : t
-        )
-      );
+      try {
+        await runJsonFallback(tabId, userContent);
+      } catch {
+        updateTab(tabId, (tab) => {
+          const nextMessages = [...tab.messages.slice(0, -1), createErrorTurn("Something went wrong. Try again.")];
+          return {
+            ...tab,
+            messages: nextMessages,
+            title: getTabTitle(nextMessages),
+          };
+        });
+      }
     } finally {
       setLoadingTabIds((prev) => {
         const next = new Set(prev);
-        next.delete(activeTabId);
+        next.delete(tabId);
         return next;
       });
     }
@@ -154,7 +259,7 @@ export function ChatInterface() {
     setActiveTabId(newTab.id);
   };
 
-  const handleClearConversation = async () => {
+  const handleClearConversation = useCallback(async () => {
     if (isActiveTabLoading) return;
     try {
       const res = await fetch("/api/conversations", {
@@ -162,18 +267,12 @@ export function ChatInterface() {
         headers: { "X-Session-ID": activeTabId },
       });
       if (res.ok) {
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === activeTabId
-              ? { ...t, messages: [], title: "New chat" }
-              : t
-          )
-        );
+        updateTab(activeTabId, (tab) => ({ ...tab, messages: [], title: "New chat" }));
       }
     } catch {
       // Silent fail
     }
-  };
+  }, [activeTabId, isActiveTabLoading, updateTab]);
 
   const handleCloseTab = async (tabId: string) => {
     const idx = tabs.findIndex((t) => t.id === tabId);
@@ -236,12 +335,16 @@ export function ChatInterface() {
       const res = await fetch("/api/sessions");
       if (res.ok) {
         const data = await res.json();
-        const sessions = data.sessions as Array<{ session_id: string; title: string; messages: Message[] }>;
+        const sessions = data.sessions as Array<{
+          session_id: string;
+          title: string;
+          messages: SessionMessage[];
+        }>;
         if (Array.isArray(sessions) && sessions.length > 0) {
           const loadedTabs: ChatTab[] = sessions.slice(0, MAX_TABS).map((s) => ({
             id: s.session_id,
             title: s.title || "New chat",
-            messages: s.messages || [],
+            messages: groupSessionMessages(s.messages || []),
           }));
           setTabs(loadedTabs);
           setActiveTabId(loadedTabs[0].id);
@@ -450,14 +553,8 @@ export function ChatInterface() {
               )}
 
               {messages.map((m) => (
-                <ChatMessage key={m.id} role={m.role} content={m.content} />
+                <ChatMessage key={m.id} turn={m} />
               ))}
-
-              {isActiveTabLoading && (
-                <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-                  <span className="animate-pulse">Thinking…</span>
-                </div>
-              )}
               <div ref={scrollRef} />
             </div>
           </div>

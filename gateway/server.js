@@ -11,6 +11,7 @@ const cors = require("cors");
 const Docker = require("dockerode");
 const fs = require("fs");
 const path = require("path");
+const { Readable } = require("stream");
 
 const app = express();
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
@@ -203,6 +204,23 @@ async function proxyToAgent(req, res) {
     }
 
     const upstream = await fetch(agentUrl, fetchOpts);
+    const contentType = upstream.headers.get("content-type") || "";
+    if (contentType.includes("text/event-stream")) {
+      res.status(upstream.status);
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", upstream.headers.get("cache-control") || "no-cache");
+      res.setHeader("Connection", upstream.headers.get("connection") || "keep-alive");
+      res.setHeader("X-Accel-Buffering", upstream.headers.get("x-accel-buffering") || "no");
+
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+
+      Readable.fromWeb(upstream.body).pipe(res);
+      return;
+    }
+
     const data = await upstream.json();
     res.status(upstream.status).json(data);
   } catch (err) {
@@ -220,6 +238,7 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "gateway" });
 });
 
+app.all("/chat/stream", proxyToAgent);
 app.all("/chat", proxyToAgent);
 app.all("/files", proxyToAgent);
 app.all("/uploads", proxyToAgent);

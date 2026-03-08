@@ -153,6 +153,12 @@ class AgentLoop:
             if isinstance(cron_tool, CronTool):
                 cron_tool.set_context(channel, chat_id)
 
+    async def _emit_stream_event(self, callback, event: dict[str, Any]) -> None:
+        """Emit a structured event to HTTP streaming clients when present."""
+        if not callback:
+            return
+        await callback(event)
+
     def _log_context(self, messages: list[dict], session_key: str | None = None) -> None:
         """Log the full context being sent to the LLM."""
         try:
@@ -184,6 +190,7 @@ class AgentLoop:
         initial_messages: list[dict],
         session: Session | None = None,
         session_key: str | None = None,
+        event_callback=None,
     ) -> tuple[str | None, list[str]]:
         """
         Run the agent iteration loop.
@@ -234,6 +241,22 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                 )
 
+                display_reasoning = response.reasoning_content
+                reasoning_source = "reasoning_content"
+                if not display_reasoning and response.content:
+                    display_reasoning = response.content
+                    reasoning_source = "assistant_content"
+
+                if display_reasoning:
+                    await self._emit_stream_event(
+                        event_callback,
+                        {
+                            "type": "assistant_reasoning",
+                            "content": display_reasoning,
+                            "source": reasoning_source,
+                        },
+                    )
+
                 if session:
                     session.add_message(
                         "assistant",
@@ -245,6 +268,17 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
+                    await self._emit_stream_event(
+                        event_callback,
+                        {
+                            "type": "assistant_tool_call_started",
+                            "toolCall": {
+                                "id": tool_call.id,
+                                "name": tool_call.name,
+                                "argumentsText": json.dumps(tool_call.arguments, ensure_ascii=False),
+                            },
+                        },
+                    )
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
@@ -261,13 +295,39 @@ class AgentLoop:
                         )
                         self.sessions.save(session)
 
+                    await self._emit_stream_event(
+                        event_callback,
+                        {
+                            "type": "assistant_tool_result",
+                            "toolCallId": tool_call.id,
+                            "name": tool_call.name,
+                            "content": result,
+                        },
+                    )
+
                 # messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
             else:
                 final_content = response.content
+                if final_content:
+                    await self._emit_stream_event(
+                        event_callback,
+                        {
+                            "type": "assistant_content_delta",
+                            "delta": final_content,
+                        },
+                    )
                 if self.log_context and final_content:
                     self._log_final_result(final_content, session_key=log_key)
                 break
 
+        await self._emit_stream_event(
+            event_callback,
+            {
+                "type": "assistant_completed",
+                "finalContent": final_content or "",
+                "toolsUsed": tools_used,
+            },
+        )
         return final_content, tools_used
 
     def _log_final_result(self, result: str, session_key: str | None = None) -> None:
@@ -394,7 +454,10 @@ class AgentLoop:
             chat_id=msg.chat_id,
         )
         final_content, tools_used = await self._run_agent_loop(
-            initial_messages, session=session, session_key=key
+            initial_messages,
+            session=session,
+            session_key=key,
+            event_callback=(msg.metadata or {}).get("_http_stream_callback"),
         )
 
         if final_content is None:
@@ -407,11 +470,15 @@ class AgentLoop:
                             tools_used=tools_used if tools_used else None)
         self.sessions.save(session)
         
+        metadata = dict(msg.metadata or {})
+        if metadata.get("_http_req"):
+            metadata["session_history"] = list(session.messages)
+
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
             content=final_content,
-            metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
+            metadata=metadata,  # Pass through for channel-specific needs (e.g. Slack thread_ts)
         )
     
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -454,7 +521,10 @@ class AgentLoop:
             chat_id=origin_chat_id,
         )
         final_content, _ = await self._run_agent_loop(
-            initial_messages, session=session, session_key=session_key
+            initial_messages,
+            session=session,
+            session_key=session_key,
+            event_callback=(msg.metadata or {}).get("_http_stream_callback"),
         )
 
         if final_content is None:
@@ -463,10 +533,15 @@ class AgentLoop:
         session.add_message("assistant", final_content)
         self.sessions.save(session)
         
+        metadata = dict(msg.metadata or {})
+        if metadata.get("_http_req"):
+            metadata["session_history"] = list(session.messages)
+
         return OutboundMessage(
             channel=origin_channel,
             chat_id=origin_chat_id,
-            content=final_content
+            content=final_content,
+            metadata=metadata,
         )
     
     async def _consolidate_memory(self, session, archive_all: bool = False) -> None:
